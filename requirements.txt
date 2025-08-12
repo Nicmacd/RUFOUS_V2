@@ -1,0 +1,27 @@
+# Core Streamlit and web framework
+streamlit>=1.28.0
+plotly>=5.17.0
+
+# PDF processing
+Pillow>=10.0.0
+PyPDF2>=3.0.0
+
+# Database and data processing  
+pandas>=2.0.0
+numpy>=1.24.0
+
+# HTTP requests for Ollama API
+requests>=2.31.0
+
+# Date/time handling
+python-dateutil>=2.8.2
+
+# System dependencies note:
+# You'll need to install poppler-utils for PDF processing:
+# macOS: brew install poppler
+# Ubuntu/Debian: sudo apt-get install poppler-utils
+# Windows: Download from https://poppler.freedesktop.org/
+
+# Ollama requirement:
+# Install Ollama from https://ollama.ai/
+# Then run: ollama pull moondream && ollama pull llama3.2
