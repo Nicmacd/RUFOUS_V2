@@ -11,8 +11,12 @@ from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime, date, timedelta
 import requests
 import pandas as pd
+from dotenv import load_dotenv
 
 from .database import RufousDatabase
+
+# Load environment variables from .env file
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -129,52 +133,26 @@ class ChatHandler:
     def _analyze_query(self, user_query: str) -> Dict[str, Any]:
         """Analyze user query to determine intent and parameters"""
         
-        analysis_prompt = f"""
-You are a financial data analyst. Analyze this user query about their personal finances and return a JSON response with the query intent and parameters.
+        analysis_prompt = f"""Analyze this financial query and return JSON with query type and parameters.
 
-User Query: "{user_query}"
+Query: "{user_query}"
 
-Available query types:
-1. "search" - Search for specific transactions
-2. "spending_analysis" - Analyze spending patterns
-3. "category_breakdown" - Group spending by categories  
-4. "trends" - Time-based analysis (monthly, weekly trends)
-5. "comparison" - Compare periods or categories
-6. "summary" - Overall financial summary
-7. "budget" - Budget-related analysis
+Types: search, spending_analysis, category_breakdown, trends, comparison, summary, budget
 
-For each query, extract:
-- type: one of the above types
-- parameters: relevant filters (dates, amounts, categories, search terms, location)
-- time_period: if mentioned (last month, this year, etc.)
-- visualization: suggested chart type (bar, line, pie, etc.)
-
-Location examples: "Kingston", "Toronto", "CA", "Ontario", "New York"
-
-Return ONLY valid JSON in this format:
+Return JSON format:
 {{
   "type": "spending_analysis",
-  "parameters": {{
-    "category": "food",
-    "time_period": "last_30_days",
-    "search_term": null,
-    "location": null
-  }},
-  "time_range": {{
-    "start_date": "2024-01-01",
-    "end_date": "2024-01-31"
-  }},
+  "parameters": {{"category": "food", "time_period": "last_30_days", "location": null}},
   "visualization": "bar_chart"
 }}
 
 Examples:
-- "How much did I spend on food last month?" -> spending_analysis with category filter
-- "Show me all transactions from Starbucks" -> search with merchant filter  
-- "What are my monthly spending trends?" -> trends analysis
-- "Compare my spending this month vs last month" -> comparison analysis
-- "Show me all transactions in Kingston" -> search with location filter
-- "How much did I spend in Toronto last month?" -> spending_analysis with location and time filters
-"""
+- "spending on food" -> spending_analysis, category: food
+- "transactions from Starbucks" -> search, search_term: Starbucks  
+- "monthly trends" -> trends
+- "spending in Toronto" -> search, location: Toronto
+- "location of transactions" -> search (for recent transactions with location info)
+- "where did I spend" -> search (for location-based analysis)"""
         
         try:
             messages = [
@@ -251,16 +229,19 @@ Examples:
                 search_term = parameters.get('search_term', '')
                 location_filter = parameters.get('location')
                 
-                if location_filter:
-                    # Search with location filter
+                # If no specific search term, get recent transactions for location analysis
+                if not search_term and not location_filter:
+                    df = self.db.get_transactions_df(limit=10)
+                elif location_filter:
                     df = self.db.search_transactions_with_location(search_term, location_filter)
                 else:
-                    df = self.db.search_transactions(search_term)
+                    df = self.db.search_transactions(search_term, limit=10)
                     
                 return {
                     'transactions': df.to_dict('records') if not df.empty else [],
                     'count': len(df),
-                    'total_amount': df['amount'].sum() if not df.empty else 0
+                    'total_amount': df['amount'].sum() if not df.empty else 0,
+                    'has_locations': 'location' in df.columns and df['location'].notna().sum() > 0 if not df.empty else False
                 }
             
             elif query_type == 'spending_analysis':
@@ -331,27 +312,22 @@ Examples:
                           data_result: Dict[str, Any]) -> Dict[str, Any]:
         """Generate natural language response from data results"""
         
-        response_prompt = f"""
-You are a helpful financial assistant. The user asked: "{user_query}"
+        # Limit data result size to avoid payload issues
+        limited_data = dict(data_result)
+        if 'transactions' in limited_data and len(limited_data['transactions']) > 5:
+            limited_data['transactions'] = limited_data['transactions'][:5]  # Only show first 5
+        
+        response_prompt = f"""User asked: "{user_query}"
 
-Query Analysis: {json.dumps(query_analysis, indent=2)}
+Query: {query_analysis.get('type', 'unknown')}
+Data: {json.dumps(limited_data, default=str)[:500]}...
 
-Data Results: {json.dumps(data_result, indent=2, default=str)}
-
-Generate a helpful, conversational response that:
-1. Directly answers the user's question
-2. Highlights key insights from the data
-3. Is concise but informative
-4. Uses natural language (avoid technical jargon)
-
-Return ONLY a JSON response with this format:
+Generate helpful financial response as JSON:
 {{
-  "summary": "Brief one-sentence summary",
-  "detailed_response": "Full conversational response",
-  "key_insights": ["insight 1", "insight 2", "insight 3"],
-  "suggested_followup": "Optional follow-up question suggestion"
-}}
-"""
+  "summary": "Brief summary",
+  "detailed_response": "Conversational answer with key numbers",
+  "key_insights": ["insight 1", "insight 2"]
+}}"""
         
         try:
             messages = [

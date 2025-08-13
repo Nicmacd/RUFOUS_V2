@@ -10,8 +10,14 @@ PyPDF2>=3.0.0
 pandas>=2.0.0
 numpy>=1.24.0
 
-# HTTP requests for Ollama API
+# HTTP requests for Groq API
 requests>=2.31.0
+
+# Environment variable management
+python-dotenv>=1.0.0
+
+# PDF text extraction
+pdfplumber>=0.10.0
 
 # Date/time handling
 python-dateutil>=2.8.2
@@ -22,6 +28,6 @@ python-dateutil>=2.8.2
 # Ubuntu/Debian: sudo apt-get install poppler-utils
 # Windows: Download from https://poppler.freedesktop.org/
 
-# Ollama requirement:
-# Install Ollama from https://ollama.ai/
-# Then run: ollama pull moondream && ollama pull llama3.2
+# Groq API requirement:
+# Get free API key from https://console.groq.com/
+# Add to .env file: GROQ_API_KEY=your_key_here
