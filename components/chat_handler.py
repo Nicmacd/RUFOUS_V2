@@ -1,11 +1,12 @@
 """
-Natural Language Query Handler using Ollama
+Natural Language Query Handler using Groq API
 Converts user questions to database operations and provides insights
 """
 
 import logging
 import json
 import re
+import os
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime, date, timedelta
 import requests
@@ -19,44 +20,66 @@ logger = logging.getLogger(__name__)
 class ChatHandler:
     """Handles natural language queries about financial data"""
     
-    def __init__(self, database: RufousDatabase, model_name: str = "llama3.2"):
-        """Initialize with database and Ollama model"""
+    def __init__(self, database: RufousDatabase, model_name: str = "llama-3.3-70b-versatile"):
+        """Initialize with database and Groq model"""
         self.db = database
         self.model_name = model_name
-        self.ollama_url = "http://localhost:11434"
-        self._check_ollama_connection()
+        self.groq_url = "https://api.groq.com/openai/v1/chat/completions"
+        self.api_key = os.getenv('GROQ_API_KEY')
+        self._check_groq_connection()
     
-    def _check_ollama_connection(self):
-        """Verify Ollama is running with the text model"""
+    def _check_groq_connection(self):
+        """Verify Groq API key and connection"""
+        if not self.api_key:
+            raise ConnectionError("GROQ_API_KEY environment variable not set")
+        
         try:
-            response = requests.get(f"{self.ollama_url}/api/tags", timeout=5)
+            # Test connection with a simple request
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            test_payload = {
+                "model": self.model_name,
+                "messages": [{"role": "user", "content": "Hello"}],
+                "max_tokens": 10,
+                "temperature": 0.1
+            }
+            
+            response = requests.post(self.groq_url, json=test_payload, headers=headers, timeout=10)
             response.raise_for_status()
             
-            models = response.json().get('models', [])
-            model_names = [model['name'] for model in models]
-            
-            if not any(self.model_name in name for name in model_names):
-                logger.warning(f"Model {self.model_name} not found, pulling...")
-                self._pull_model()
-            
-            logger.info(f"Chat handler initialized with {self.model_name}")
+            logger.info(f"Chat handler initialized with Groq {self.model_name}")
             
         except Exception as e:
-            logger.error(f"Ollama connection failed: {e}")
-            raise ConnectionError("Please ensure Ollama is running")
+            logger.error(f"Groq connection failed: {e}")
+            raise ConnectionError(f"Please check your GROQ_API_KEY: {e}")
     
-    def _pull_model(self):
-        """Pull the text model if not available"""
+    def _call_groq_api(self, messages: List[Dict], max_tokens: int = 500, temperature: float = 0.1) -> str:
+        """Make API call to Groq"""
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": self.model_name,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "top_p": 0.9
+        }
+        
         try:
-            response = requests.post(
-                f"{self.ollama_url}/api/pull",
-                json={"name": self.model_name},
-                timeout=120
-            )
+            response = requests.post(self.groq_url, json=payload, headers=headers, timeout=30)
             response.raise_for_status()
-            logger.info(f"Successfully pulled {self.model_name}")
+            
+            result = response.json()
+            return result["choices"][0]["message"]["content"]
+            
         except Exception as e:
-            logger.error(f"Failed to pull model: {e}")
+            logger.error(f"Groq API call failed: {e}")
             raise
     
     def process_query(self, user_query: str) -> Dict[str, Any]:
@@ -154,23 +177,12 @@ Examples:
 """
         
         try:
-            response = requests.post(
-                f"{self.ollama_url}/api/generate",
-                json={
-                    "model": self.model_name,
-                    "prompt": analysis_prompt,
-                    "stream": False,
-                    "options": {
-                        "temperature": 0.1,
-                        "top_p": 0.9
-                    }
-                },
-                timeout=30
-            )
+            messages = [
+                {"role": "system", "content": "You are a financial data analyst. Analyze user queries and return structured JSON responses."},
+                {"role": "user", "content": analysis_prompt}
+            ]
             
-            response.raise_for_status()
-            result = response.json()
-            response_text = result.get('response', '').strip()
+            response_text = self._call_groq_api(messages, max_tokens=300, temperature=0.1)
             
             # Parse JSON response
             json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
@@ -342,23 +354,12 @@ Return ONLY a JSON response with this format:
 """
         
         try:
-            response = requests.post(
-                f"{self.ollama_url}/api/generate",
-                json={
-                    "model": self.model_name,
-                    "prompt": response_prompt,
-                    "stream": False,
-                    "options": {
-                        "temperature": 0.3,
-                        "top_p": 0.9
-                    }
-                },
-                timeout=30
-            )
+            messages = [
+                {"role": "system", "content": "You are a helpful financial assistant. Generate conversational responses about financial data."},
+                {"role": "user", "content": response_prompt}
+            ]
             
-            response.raise_for_status()
-            result = response.json()
-            response_text = result.get('response', '').strip()
+            response_text = self._call_groq_api(messages, max_tokens=400, temperature=0.3)
             
             # Parse JSON response
             json_match = re.search(r'\{.*\}', response_text, re.DOTALL)

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Rufous v2 is a privacy-first financial analysis tool built with Streamlit that processes bank statements locally using text-based PDF extraction. Users can upload PDF statements and query their financial data using natural language (powered by local Ollama models).
+Rufous v2 is a financial analysis tool built with Streamlit that processes bank statements locally using text-based PDF extraction. Users can upload PDF statements and query their financial data using natural language (powered by Groq cloud API).
 
 ## Common Development Commands
 
@@ -21,12 +21,13 @@ sudo apt-get install poppler-utils  # Ubuntu/Debian
 python test_setup.py
 ```
 
-### Ollama Model Management (Chat Only)
+### Groq API Setup (Chat Only)
 ```bash
-# Start Ollama service (required for natural language queries only)
-ollama serve
+# Set your Groq API key (required for natural language queries)
+export GROQ_API_KEY="your_api_key_here"
 
-# Pull required model for chat
+# Or add to your shell profile (.bashrc/.zshrc):
+echo 'export GROQ_API_KEY="your_api_key_here"' >> ~/.zshrc
 ollama pull llama3.2           # For natural language queries
 
 # Check available models
@@ -60,10 +61,10 @@ The application follows a modular architecture with clear separation of concerns
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌────────────────┐
-│   Streamlit     │    │     Ollama       │    │    SQLite      │
-│   Frontend      │◄──►│   AI Models      │    │   Database     │
+│   Streamlit     │    │    Groq API      │    │    SQLite      │
+│   Frontend      │◄──►│   (Cloud AI)     │    │   Database     │
 │                 │    │                  │    │                │
-│ • Chat UI       │    │ • Vision (PDFs)  │    │ • Transactions │
+│ • Chat UI       │    │ • Fast Queries   │    │ • Transactions │
 │ • File Upload   │    │ • Text (Queries) │    │ • Categories   │
 │ • Visualizations│    │ • Local Only     │    │ • Query History│
 └─────────────────┘    └──────────────────┘    └────────────────┘
@@ -75,13 +76,13 @@ The application follows a modular architecture with clear separation of concerns
 - **components/database.py**: SQLite database operations with optimized schemas for analytics
 - **components/clean_pdf_processor.py**: Text-based PDF transaction extraction (high accuracy, fast)
 - **components/pdf_processor.py**: Legacy vision model integration (deprecated)
-- **components/chat_handler.py**: Natural language query processing using Ollama text models
+- **components/chat_handler.py**: Natural language query processing using Groq cloud API
 - **components/visualizations.py**: Plotly chart generation for financial data visualization
 
 ### Key Design Patterns
 
 1. **Session State Management**: All components are initialized in Streamlit session state for persistence across interactions
-2. **Local-First Architecture**: No external API calls - all AI processing via local Ollama models
+2. **Hybrid Architecture**: PDF processing runs locally, natural language queries use fast Groq cloud API
 3. **Database-Centric**: SQLite with performance indexes for fast analytical queries
 4. **Component Isolation**: Each component handles its own initialization and error handling
 
@@ -97,15 +98,15 @@ The SQLite database uses an optimized schema for financial analytics:
 ### AI Model Integration
 
 - **Text-based extraction**: High-accuracy parsing of BMO credit card statements using pdfplumber
-- **llama3.2**: Handles natural language queries and converts them to database operations
+- **llama-3.1-70b-versatile**: Handles natural language queries via Groq API
 
-PDF extraction runs locally using text parsing (no AI needed). Chat queries use local Ollama models, ensuring complete privacy.
+PDF extraction runs locally using text parsing (no AI needed). Chat queries use Groq's fast cloud API for instant responses.
 
 ### Error Handling Strategy
 
 Components gracefully degrade when dependencies are unavailable:
 - PDF processing requires pdfplumber (fast text extraction)
-- Chat features disabled if Ollama/llama3.2 unavailable  
+- Chat features disabled if GROQ_API_KEY not set  
 - Database operations continue independently
 - UI shows appropriate error messages and setup instructions
 
@@ -129,9 +130,9 @@ Extend `components/visualizations.py`:
 
 No formal migration system exists. Schema changes should be additive and handled in `RufousDatabase._initialize_database()` with `IF NOT EXISTS` clauses.
 
-### Debugging Ollama Integration
+### Debugging Groq Integration
 
-- Check Ollama service: `curl http://localhost:11434/api/tags`
-- Verify models available: `ollama list`
-- Monitor logs in terminal running `ollama serve`
+- Check API key: `echo $GROQ_API_KEY`
+- Test connection: `curl -H "Authorization: Bearer $GROQ_API_KEY" https://api.groq.com/openai/v1/models`
+- Monitor rate limits at: https://console.groq.com/settings/limits
 - Use `test_setup.py` for comprehensive diagnostics

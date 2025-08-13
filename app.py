@@ -76,6 +76,7 @@ def initialize_session_state():
             st.session_state.chat_handler = ChatHandler(st.session_state.database)
         except ConnectionError as e:
             st.error(f"Failed to initialize chat handler: {e}")
+            st.info("💡 **Setup Instructions:** Set your GROQ_API_KEY environment variable to enable chat features.")
             st.session_state.chat_handler = None
     
     if 'visualizer' not in st.session_state:
@@ -331,7 +332,8 @@ def render_chat_interface():
     st.markdown("### 💬 Financial Chat Assistant")
     
     if st.session_state.chat_handler is None:
-        st.error("Chat handler not available. Please ensure Ollama is running.")
+        st.error("Chat handler not available. Please check your GROQ_API_KEY environment variable.")
+        st.info("💡 Get a free API key at: https://console.groq.com/")
         return
     
     # Check for pre-filled queries (from sidebar or suggestions)
