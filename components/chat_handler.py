@@ -89,7 +89,22 @@ class ChatHandler:
     def process_query(self, user_query: str) -> Dict[str, Any]:
         """Process natural language query and return results"""
         try:
-            # Classify query type and extract parameters
+            # Check for common patterns and use dedicated functions
+            query_lower = user_query.lower()
+            
+            # Pattern: Recent transactions with locations
+            if any(phrase in query_lower for phrase in ['where', 'location', 'recent transactions']):
+                if any(phrase in query_lower for phrase in ['recent', 'last', 'latest']):
+                    return self.get_recent_transactions_with_locations()
+                    
+            # Pattern: Location-based spending
+            location_keywords = ['in toronto', 'in kingston', 'in vancouver', 'in calgary']
+            for keyword in location_keywords:
+                if keyword in query_lower:
+                    location = keyword.replace('in ', '').title()
+                    return self.get_spending_by_location(location)
+            
+            # Fall back to AI-powered analysis for complex queries
             query_analysis = self._analyze_query(user_query)
             
             if query_analysis['type'] == 'error':
@@ -185,32 +200,58 @@ Examples:
             }
     
     def _compute_time_range(self, time_period: str) -> Optional[Dict[str, str]]:
-        """Convert natural language time period to date range"""
+        """Convert natural language time period to date range based on actual data"""
         if not time_period:
             return None
         
-        today = date.today()
+        # Get the actual date range of user's data to make smart calculations
+        try:
+            recent_df = self.db.get_transactions_df(limit=100)
+            if recent_df.empty:
+                return None
+            
+            latest_date = pd.to_datetime(recent_df['date']).max().date()
+            earliest_date = pd.to_datetime(recent_df['date']).min().date()
+            
+            # Use the latest transaction date as reference instead of today
+            reference_date = latest_date
+            
+        except Exception:
+            # Fallback to current date if data access fails
+            reference_date = date.today()
         
-        time_mappings = {
-            'last_30_days': (today - timedelta(days=30), today),
-            'last_month': (today.replace(day=1) - timedelta(days=1), today.replace(day=1) - timedelta(days=1)),
-            'this_month': (today.replace(day=1), today),
-            'last_3_months': (today - timedelta(days=90), today),
-            'this_year': (today.replace(month=1, day=1), today),
-            'last_year': (
-                today.replace(year=today.year-1, month=1, day=1),
-                today.replace(year=today.year-1, month=12, day=31)
-            )
+        # Calculate ranges based on actual data dates
+        if time_period.lower() == 'last_month':
+            # Get the month before the latest transaction month
+            first_of_ref_month = reference_date.replace(day=1)
+            last_day_of_last_month = first_of_ref_month - timedelta(days=1)
+            first_of_last_month = last_day_of_last_month.replace(day=1)
+            start_date = first_of_last_month
+            end_date = last_day_of_last_month
+        elif time_period.lower() == 'last_30_days':
+            start_date = reference_date - timedelta(days=30)
+            end_date = reference_date
+        elif time_period.lower() == 'this_month':
+            start_date = reference_date.replace(day=1)
+            end_date = reference_date
+        elif time_period.lower() == 'last_3_months':
+            start_date = reference_date - timedelta(days=90)
+            end_date = reference_date
+        elif time_period.lower() == 'this_year':
+            start_date = reference_date.replace(month=1, day=1)
+            end_date = reference_date
+        elif time_period.lower() == 'last_year':
+            start_date = reference_date.replace(year=reference_date.year-1, month=1, day=1)
+            end_date = reference_date.replace(year=reference_date.year-1, month=12, day=31)
+        else:
+            # Default to last 30 days for unknown periods
+            start_date = reference_date - timedelta(days=30)
+            end_date = reference_date
+        
+        return {
+            'start_date': start_date.isoformat(),
+            'end_date': end_date.isoformat()
         }
-        
-        if time_period.lower() in time_mappings:
-            start_date, end_date = time_mappings[time_period.lower()]
-            return {
-                'start_date': start_date.isoformat(),
-                'end_date': end_date.isoformat()
-            }
-        
-        return None
     
     def _execute_data_query(self, query_analysis: Dict[str, Any]) -> Dict[str, Any]:
         """Execute database query based on analysis"""
@@ -249,15 +290,23 @@ Examples:
                 df = self.db.get_transactions_df(start_date, end_date, category)
                 
                 if df.empty:
-                    return {'data': [], 'summary': 'No transactions found for this period'}
+                    return {
+                        'transactions': [],
+                        'total_spent': 0,
+                        'transaction_count': 0,
+                        'summary': 'No transactions found for this period'
+                    }
                 
                 expenses = df[df['amount'] < 0]
+                total_spent = abs(expenses['amount'].sum()) if not expenses.empty else 0
+                
                 return {
                     'transactions': df.to_dict('records'),
-                    'total_spent': abs(expenses['amount'].sum()),
+                    'total_spent': total_spent,
                     'transaction_count': len(expenses),
                     'average_expense': abs(expenses['amount'].mean()) if not expenses.empty else 0,
-                    'date_range': f"{start_date} to {end_date}" if start_date and end_date else "All time"
+                    'date_range': f"{start_date} to {end_date}" if start_date and end_date else f"Found {len(df)} transactions",
+                    'actual_data_range': f"{df['date'].min()} to {df['date'].max()}" if not df.empty else "No data"
                 }
             
             elif query_type == 'category_breakdown':
@@ -312,21 +361,28 @@ Examples:
                           data_result: Dict[str, Any]) -> Dict[str, Any]:
         """Generate natural language response from data results"""
         
-        # Limit data result size to avoid payload issues
-        limited_data = dict(data_result)
-        if 'transactions' in limited_data and len(limited_data['transactions']) > 5:
-            limited_data['transactions'] = limited_data['transactions'][:5]  # Only show first 5
+        # Format data for AI with clear structure
+        transactions = data_result.get('transactions', [])
+        
+        data_summary = {
+            'total_spent': data_result.get('total_spent', 0),
+            'transaction_count': data_result.get('transaction_count', len(transactions)),
+            'date_range': data_result.get('actual_data_range', 'Unknown'),
+            'sample_transactions': transactions[:3] if transactions else []
+        }
         
         response_prompt = f"""User asked: "{user_query}"
 
-Query: {query_analysis.get('type', 'unknown')}
-Data: {json.dumps(limited_data, default=str)[:500]}...
+Found {len(transactions)} transactions with total spending of ${data_summary['total_spent']:.2f}
 
-Generate helpful financial response as JSON:
+Data range: {data_summary['date_range']}
+Sample transactions: {json.dumps(data_summary['sample_transactions'], default=str)[:300]}
+
+Generate helpful response as JSON:
 {{
-  "summary": "Brief summary",
-  "detailed_response": "Conversational answer with key numbers",
-  "key_insights": ["insight 1", "insight 2"]
+  "summary": "Brief summary with actual numbers",
+  "detailed_response": "Answer with specific amounts and dates from the data",
+  "key_insights": ["insight based on actual data"]
 }}"""
         
         try:
@@ -366,11 +422,101 @@ Generate helpful financial response as JSON:
             "How much did I spend last month?",
             "Show me all transactions over $100",
             "What are my top spending categories?",
-            "Compare my spending this month vs last month",
-            "Show me all transactions from Amazon",
+            "Where are my recent transactions?",
+            "Show me all transactions from Amazon", 
             "What's my monthly spending trend?",
             "How much did I spend on food this year?",
             "Show me all transactions in Kingston",
             "What was my biggest expense last week?",
             "How much did I spend in Toronto last month?"
         ]
+    
+    def get_recent_transactions_with_locations(self, limit: int = 10) -> Dict[str, Any]:
+        """Get recent transactions with location info - dedicated function"""
+        try:
+            df = self.db.get_transactions_df(limit=limit)
+            
+            if df.empty:
+                return {
+                    'status': 'success',
+                    'transactions': [],
+                    'summary': 'No recent transactions found'
+                }
+            
+            transactions = df.to_dict('records')
+            location_count = df['location'].notna().sum() if 'location' in df.columns else 0
+            
+            return {
+                'status': 'success',
+                'query_type': 'recent_transactions',
+                'data': {
+                    'transactions': transactions,
+                    'count': len(transactions),
+                    'locations_found': location_count,
+                    'date_range': f"{df['date'].min()} to {df['date'].max()}",
+                    'total_amount': df['amount'].sum()
+                },
+                'response': {
+                    'summary': f"Found {len(transactions)} recent transactions",
+                    'detailed_response': f"Here are your {len(transactions)} most recent transactions. {location_count} have location information. Total amount: ${df['amount'].sum():.2f}",
+                    'key_insights': [
+                        f"Most recent transaction: {transactions[0]['description']}" if transactions else "No transactions",
+                        f"{location_count} out of {len(transactions)} transactions have location data",
+                        f"Date range: {df['date'].min()} to {df['date'].max()}"
+                    ]
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get recent transactions: {e}")
+            return {
+                'status': 'error',
+                'message': f"Failed to retrieve recent transactions: {str(e)}"
+            }
+    
+    def get_spending_by_location(self, location: str = None, limit: int = 50) -> Dict[str, Any]:
+        """Get spending breakdown by location - dedicated function"""
+        try:
+            if location:
+                df = self.db.search_transactions_with_location('', location)
+            else:
+                df = self.db.get_transactions_df(limit=limit)
+                df = df[df['location'].notna()] if 'location' in df.columns else df
+            
+            if df.empty:
+                return {
+                    'status': 'success',
+                    'transactions': [],
+                    'summary': f'No transactions found for location: {location}' if location else 'No transactions with location data'
+                }
+            
+            expenses = df[df['amount'] < 0]
+            total_spent = abs(expenses['amount'].sum()) if not expenses.empty else 0
+            
+            return {
+                'status': 'success',
+                'query_type': 'location_spending',
+                'data': {
+                    'transactions': df.to_dict('records'),
+                    'count': len(df),
+                    'total_spent': total_spent,
+                    'location_filter': location,
+                    'unique_locations': df['location'].unique().tolist() if 'location' in df.columns else []
+                },
+                'response': {
+                    'summary': f"Found {len(df)} transactions" + (f" in {location}" if location else " with location data"),
+                    'detailed_response': f"Total spending: ${total_spent:.2f} across {len(df)} transactions" + (f" in {location}" if location else ""),
+                    'key_insights': [
+                        f"Total spent: ${total_spent:.2f}",
+                        f"Number of transactions: {len(df)}",
+                        f"Average per transaction: ${total_spent/len(df):.2f}" if len(df) > 0 else "No transactions"
+                    ]
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get location spending: {e}")
+            return {
+                'status': 'error',
+                'message': f"Failed to analyze location spending: {str(e)}"
+            }
